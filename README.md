@@ -12,7 +12,10 @@ streamlit run app.py
 ```
 
 ## Lessons learn
-- 
+- how to connect my streamlit with supabase
+- how to create a search bar
+- how to create, edit, and delete a prompt
+- how update the prompts based on filter and sort result
 
 ## Questions
--
+- 

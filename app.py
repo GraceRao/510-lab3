@@ -6,13 +6,22 @@ import streamlit as st
 import psycopg2
 from dotenv import load_dotenv
 
+from annotated_text import annotated_text
+
 load_dotenv()
+
+st.set_page_config(
+    page_title="Promptbase",
+    page_icon="📝",
+    layout="centered",
+)
 
 @dataclass
 class Prompt:
-    title: str
-    prompt: str
-    is_favorite: bool
+    id: int = None
+    title: str = ""
+    prompt: str = ""
+    is_favorite: bool = False
     created_at: datetime.datetime = None
     updated_at: datetime.datetime = None
 
@@ -34,52 +43,107 @@ def setup_database():
     con.commit()
     return con, cur
 
-def prompt_form(prompt=None):
-    default = Prompt("", "", False) if prompt is None else prompt
-    with st.form(key="prompt_form", clear_on_submit=True):
-        title = st.text_input("Title", value=default.title)
-        prompt_content = st.text_area("Prompt", height=200, value=default.prompt)
-        is_favorite = st.checkbox("Favorite", value=default.is_favorite)
+def create_prompt_form(cur):
+    with st.form("new_prompt_form", clear_on_submit=True):
+        st.subheader("Add New Prompt")
+        title = st.text_input("Title")
+        prompt_content = st.text_area("Prompt", height=200)
+        is_favorite = st.checkbox("Favorite")
 
         submitted = st.form_submit_button("Submit")
-        if submitted:
-            if not title or not prompt_content:
-                st.error('Please fill in both the title and prompt fields.')
-                return
-            return Prompt(title, prompt_content, is_favorite)
+        if submitted and title and prompt_content:
+            cur.execute(
+                "INSERT INTO prompts (title, prompt, is_favorite) VALUES (%s, %s, %s) RETURNING id",
+                (title, prompt_content, is_favorite)
+            )
+            prompt_id = cur.fetchone()[0]
+            st.success("Prompt added successfully!")
+            con.commit()
 
-def display_prompts(cur):
-    cur.execute("SELECT * FROM prompts ORDER BY created_at DESC")  # Default sort by created date 
+def edit_prompt_form(cur, prompt_id):
+    cur.execute("SELECT * FROM prompts WHERE id = %s", (prompt_id,))
+    result = cur.fetchone()
+    if result:
+        prompt = Prompt(id=result[0], title=result[1], prompt=result[2], is_favorite=result[3], created_at=result[4], updated_at=result[5])
+    else:
+        st.error("Prompt not found.")
+        return
+
+    with st.form(f"edit_prompt_form_{prompt.id}"):
+        st.write("Edit Prompt")
+        title = st.text_input("Title", value=prompt.title)
+        prompt_content = st.text_area("Prompt", height=200, value=prompt.prompt)
+        is_favorite = st.checkbox("Favorite", value=prompt.is_favorite)
+
+        submitted = st.form_submit_button("Update")
+        if submitted and (title and prompt_content):
+            cur.execute(
+                "UPDATE prompts SET title = %s, prompt = %s, is_favorite = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s",
+                (title, prompt_content, is_favorite, prompt.id)
+            )
+            st.success("Prompt updated successfully!")
+            con.commit()
+            del st.session_state['edit_prompt_id']  # Remove the edit state
+
+def display_prompts(cur, search_query, order_by, descending, filter_option):
+    st.subheader("Prompt List")
+    search_clause = "%" + search_query + "%"
+    order_clause = "DESC" if descending else "ASC"
+    filter_clause = ""
+    if filter_option == "Favorites":
+        filter_clause = "AND is_favorite = TRUE"
+    elif filter_option == "Non-favorites":
+        filter_clause = "AND is_favorite = FALSE"
+
+    cur.execute(
+        f"""
+        SELECT * FROM prompts 
+        WHERE (title ILIKE %s OR prompt ILIKE %s)
+        {filter_clause}
+        ORDER BY {order_by} {order_clause}
+        """, (search_clause, search_clause))
     prompts = cur.fetchall()
-    # TODO: Add a search bar
-    # TODO: Add a sort by date
-    # TODO: Add favorite button
+
     for p in prompts:
-        with st.expander(p[1]):
-            st.code(p[2])
-            # TODO: Add a edit function
-            if st.button("Delete", key=p[0]):
+        with st.expander(f"{p[1]}"):
+            st.write(f"Prompt: {p[2]}")
+            st.write(f"Favorite: {'Yes' if p[3] else 'No'}")
+            if st.button("Edit", key=f"edit_{p[0]}"):
+                st.session_state.edit_prompt_id = p[0]
+                st.experimental_rerun()
+            if st.button("Delete", key=f"delete_{p[0]}"):
                 cur.execute("DELETE FROM prompts WHERE id = %s", (p[0],))
                 con.commit()
-                st.rerun()
+                st.experimental_rerun()
+
+            if 'edit_prompt_id' in st.session_state and st.session_state.edit_prompt_id == p[0]:
+                edit_prompt_form(cur, p[0])
 
 if __name__ == "__main__":
     st.title("Promptbase")
-    st.subheader("A simple app to store and retrieve prompts")
+    annotated_text(("App", "", "#faf"), " | ", ("ChatGPT", "", "#8ef"), " | ", ("Prompt", "", "#fea"))
+    st.markdown("""
+            Welcome to my app, the ultimate tool for effortlessly storing and retrieving prompts. 
+            Tailored for writers, educators, and creative minds, it provides a seamless way to organize and access your ideas with a user-friendly interface. 
+            """)
+
+    st.divider()
 
     con, cur = setup_database()
 
-    new_prompt = prompt_form()
-    if new_prompt:
-        try: 
-            cur.execute(
-                "INSERT INTO prompts (title, prompt, is_favorite) VALUES (%s, %s, %s)",
-                (new_prompt.title, new_prompt.prompt, new_prompt.is_favorite)
-            )
-            con.commit()
-            st.success("Prompt added successfully!")
-        except psycopg2.Error as e:
-            st.error(f"Database error: {e}")
+    with st.sidebar:
+        st.header("Search, Sort, and Filter")
+        search_query = st.text_input("Search Prompts")
+        order_by = st.selectbox("Sort by", ["created_at","title"], index=0)
+        descending = st.checkbox("Descending Order", value=True)
+        filter_options = ["All", "Favorites", "Non-favorites"]
+        filter_option = st.selectbox("Filter by/Show", filter_options, index=0)
 
-    display_prompts(cur)
+    # Always show the create prompt form
+    create_prompt_form(cur)
+    st.divider()
+
+    # Display existing prompts with edit/delete options
+    display_prompts(cur, search_query, order_by, descending, filter_option)
+
     con.close()
