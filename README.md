@@ -15,7 +15,8 @@ streamlit run app.py
 - how to connect my streamlit with supabase
 - how to create a search bar
 - how to create, edit, and delete a prompt
-- how update the prompts based on filter and sort result
+- how update prompt list based on sort options
+- how to update prompt list based on filter options
 
 ## Questions
-- 
+-  how to auto refresh the page after submit the new update prompt
